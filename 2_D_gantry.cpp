@@ -6,28 +6,35 @@
 #define M1 4 // PE2
 #define E2 6 // PE4
 #define M2 7 // PE5
-#define S0 0 // State 0: IDLE.
-#define S1 1 // State 1: PARSING.
-#define S2 2 // State 2: MOVING.
-#define S3 3 // State 3: HOMING.
-#define S4 4 // State 4: ERROR. 
 #define ENCODER_RESOLUTION 48
 #define GEAR_RATIO 172
 #define DEBOUNCE_COUNT 2
 
+// =============================================================================
+// Section: Initialisation
+// =============================================================================
+
+/* Initialise the variable to store the power send to the motors and the encoder readings. */
 volatile uint8_t left_motor_power = 0;
 volatile unsigned int left_encoder = 0;
 volatile uint8_t right_motor_power = 0;
 volatile unsigned int right_encoder = 0;
+
+/* Build two data type, which use for finite state machine, and store the G-Code command.
+   The state of the finite state machine is idle. */
 enum MachineState {IDLE, PARSING, MOVING, HOMING, ERROR};
 MachineState state = IDLE;
+struct GCode {int g; float x; float y; float f;};
+GCode command = {0, 0, 0, 0};
+
+/* Initilise the variable to count the time that the timer 3 overflow as a clock.
+   The array represent the time that the button interrupt last triggered, each element corresponds to
+   top, button, left and right. homing_step shows the current step when the machine do homing. */
 volatile uint16_t clock = 0;
 volatile uint16_t last_clock[4] = {0};
+volatile int homing_step = 1;
 
-
-volatile int step = 1;
-volatile bool stop = false;
-
+/* Help functions are initialised here. */
 void idleSystem(void);
 void systemParsing(void);
 void systemHoming(void);
@@ -35,6 +42,10 @@ void systemMoving(void);
 bool switchDebounce(int button_number);
 void moveInDistance(float x, float y);
 void performHoming(void);
+
+// =============================================================================
+// Section: Setup and Main Loop
+// =============================================================================
 
 void setup() {
     cli();
@@ -77,32 +88,14 @@ void setup() {
 }
 
 void loop() {
-    switch (state) {
-        case IDLE:
-            EICRA |= (1 << ISC31);
-            EICRB |= (1 << ISC41);
-            if (Serial.available() > 0) systemHoming();
-            break;
-        case PARSING:
-            right_motor_power = 100;
-            left_motor_power = 100;
-            systemMoving();
-            break;
-        case HOMING:
-            // Reset the logical to any logical change at button generates an interrupt request.
-            EICRA &= ~(1 << ISC31);
-            EICRB &= ~(1 << ISC41);
-            performHoming();
-            idleSystem();
-            break;
-        case MOVING:
-            digitalWrite(M1, LOW);
-            digitalWrite(M2, HIGH);
-            analogWrite(E1, right_motor_power);
-            analogWrite(E2, left_motor_power);
-            break;
-        case ERROR:
-            break;
+    if (Serial.available() > 0) {
+        char c = Serial.read();
+        systemHoming();
+    }
+    if (state == HOMING) {
+      EICRA &= ~(1 << ISC31);
+      EICRB &= ~(1 << ISC41);
+      performHoming();
     }
 }
 
@@ -122,7 +115,7 @@ ISR(INT2_vect) {
 // External interrupt 2 is triggered on the rising edge when the bottom button is pressed.
 ISR(INT3_vect) {
     if (switchDebounce(1)) {
-        if (state == HOMING) step++;;
+        if (state == HOMING) homing_step++;;
         idleSystem();
         Serial.println("Bottom button pressed.");
     }
@@ -131,7 +124,7 @@ ISR(INT3_vect) {
 // External interrupt 2 is triggered on the rising edge when the left button is pressed.
 ISR(INT4_vect) {
     if (switchDebounce(2)) {
-        if (state == HOMING) step++;
+        if (state == HOMING) homing_step++;
         idleSystem();
         Serial.println("Left button pressed.");
     }
@@ -201,38 +194,30 @@ void moveInDistance(float x, float y) {
 }
 
 void performHoming(void) {
-    while (step) {
-        if (step == 1) {
-            digitalWrite(M1, LOW);
-            digitalWrite(M2, LOW);
-            analogWrite(E1, 100);
-            analogWrite(E2, 100);
-        } else if (step ==2) {
-            analogWrite(E1, 0);
-            analogWrite(E2, 0);
-            _delay_ms(1000);
-            digitalWrite(M1, HIGH);
-            digitalWrite(M2, HIGH);
-            analogWrite(E1, 60);
-            analogWrite(E2, 60);
-        } else if (step == 3) {
-            analogWrite(E1, 0);
-            analogWrite(E2, 0);
-            _delay_ms(1000);
-            digitalWrite(M1, HIGH);
-            digitalWrite(M2, LOW);
-            analogWrite(E1, 100);
-            analogWrite(E2, 100);
-        } else if (step == 4) {
-            analogWrite(E1, 0);
-            analogWrite(E2, 0);
-            _delay_ms(1000);
-            digitalWrite(M1, LOW);
-            digitalWrite(M2, HIGH);
-            analogWrite(E1, 60);
-            analogWrite(E2, 60);
-        } else {
-            return;
-        }
+    if (homing_step == 1) {
+        digitalWrite(M1, LOW);
+        digitalWrite(M2, LOW);
+        right_motor_power = 150;
+        left_motor_power = 150;
+    } else if (homing_step ==2) {
+        digitalWrite(M1, HIGH);
+        digitalWrite(M2, HIGH);
+        right_motor_power = 100;
+        left_motor_power = 100;
+    } else if (homing_step == 3) {
+        digitalWrite(M1, HIGH);
+        digitalWrite(M2, LOW);
+        right_motor_power = 160;
+        left_motor_power = 150;
+    } else if (homing_step == 4) {
+        digitalWrite(M1, LOW);
+        digitalWrite(M2, HIGH);
+        right_motor_power = 100;
+        left_motor_power = 100;
+    } else {
+        right_motor_power = 0;
+        left_motor_power = 0;
     }
+    analogWrite(E1, right_motor_power);
+    analogWrite(E2, left_motor_power);
 }
