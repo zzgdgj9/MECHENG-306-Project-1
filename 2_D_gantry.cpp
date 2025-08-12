@@ -221,3 +221,60 @@ void performHoming(void) {
     analogWrite(E1, right_motor_power);
     analogWrite(E2, left_motor_power);
 }
+
+
+
+
+
+// String input_g_code = "";
+// struct GCode {int g; float x; float y; float f;};
+// GCode cmd = {0, 0, 0, 0};
+
+// void PrintCommand() {
+//   Serial.println(cmd.g);
+//   Serial.println(cmd.x);
+//   Serial.println(cmd.y);
+//   Serial.println(cmd.f);
+// }
+
+// void ProcessGCode(String line) {
+
+//   // Parse character-by-character
+//   int i = 0;
+//   while (i < line.length()) {
+//     char letter = line[i++];
+//     if (letter < 65 || letter >122 || (letter > 90 && letter < 97)) { continue;}
+
+//     // Gather number after the letter
+//     String numberStr = "";
+//     while (i < line.length() && (isDigit(line[i]) || line[i] == '.' || line[i] == ' ')) {
+//       numberStr += line[i++];
+//     }
+//     float value = numberStr.toFloat();
+
+//     switch (letter) {
+//       case 'G': case 'g': cmd.g = (int)value; break;
+//       case 'X': case 'x': cmd.x = value; break;
+//       case 'Y': case 'y': cmd.y = value; break;
+//       case 'F': case 'f': cmd.f = value; break;
+//     }
+//   }
+// }
+
+// void setup() {
+//   Serial.begin(9600);
+// }
+
+// void loop() {
+//   if (Serial.available() > 0) {
+//         char c = Serial.read();
+//         if (c != '\n' && c != '\r') {
+//           input_g_code += c;
+//         } else {
+//           Serial.println(input_g_code);
+//           ProcessGCode(input_g_code);
+//           input_g_code = "";
+//           PrintCommand();
+//         }
+//     }
+// }
