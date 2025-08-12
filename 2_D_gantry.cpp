@@ -13,7 +13,7 @@
 #define S4 4 // State 4: ERROR. 
 #define ENCODER_RESOLUTION 48
 #define GEAR_RATIO 172
-#define DEBOUNCE_COUNTER 6
+#define DEBOUNCE_COUNT 2
 
 volatile uint8_t left_motor_power = 0;
 volatile unsigned int left_encoder = 0;
@@ -22,7 +22,7 @@ volatile unsigned int right_encoder = 0;
 enum MachineState {IDLE, PARSING, MOVING, HOMING, ERROR};
 MachineState state = IDLE;
 volatile uint16_t clock = 0;
-volatile uint16_t last_clock = [0, 0, 0, 0];
+volatile uint16_t last_clock[4] = {0};
 
 
 volatile int step = 1;
@@ -112,32 +112,42 @@ void loop() {
 
 // External interrupt 2 is triggered on the rising edge when the top button is pressed.
 ISR(INT2_vect) {
-    if (~switchDebounce(0)) return;
-    idleSystem();
-    Serial.println("Top button pressed.");
+    if (switchDebounce(0)) {
+        idleSystem();
+        Serial.println("Top button pressed.");
+    }
+    
 }
 
 // External interrupt 2 is triggered on the rising edge when the bottom button is pressed.
 ISR(INT3_vect) {
-    if (~switchDebounce(1)) return;
-    if (state == HOMING) step++;;
-    idleSystem();
-    Serial.println("Bottom button pressed.");
+    if (switchDebounce(1)) {
+        if (state == HOMING) step++;;
+        idleSystem();
+        Serial.println("Bottom button pressed.");
+    }
 }
 
 // External interrupt 2 is triggered on the rising edge when the left button is pressed.
 ISR(INT4_vect) {
-    if (~switchDebounce(2)) return;
-    if (state == HOMING) step++;
-    idleSystem();
-    Serial.println("Left button pressed.");
+    if (switchDebounce(2)) {
+        if (state == HOMING) step++;
+        idleSystem();
+        Serial.println("Left button pressed.");
+    }
+    
 }
 
 // External interrupt 2 is triggered on the rising edge when the right button is pressed.
 ISR(INT5_vect) {
-    if (~switchDebounce(3)) return;
-    idleSystem();
-    Serial.println("Right button pressed.");
+    if (switchDebounce(3)) {
+        idleSystem();
+        Serial.println("Right button pressed.");
+    }
+}
+
+ISR(TIMER2_OVF_vect) {
+    clock++;
 }
 
 ISR(PCINT0_vect) {
@@ -179,7 +189,7 @@ void systemMoving(void) {
 }
 
 bool switchDebounce(int button_number) {
-    if ((clock - last_clock[button_number]) >= DEBOUNCE_COUNTER) {
+    if ((clock - last_clock[button_number]) >= DEBOUNCE_COUNT) {
         last_clock[button_number] = clock;
         return true;
     } 
