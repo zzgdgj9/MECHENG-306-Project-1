@@ -67,6 +67,7 @@ void setup() {
     PCMSK2 |= (1 << PCINT16) | (1 << PCINT17);
 
     /* Set up timer 2 for clock using. Use overflow interrupt, prescaler = 1024. */
+    TCCR2A = 0;
     TCCR2B |= (1 << CS22) | (1 << CS21) | (1 << CS20);
     TIMSK2 |= (1 << TOIE2);
 
