@@ -14,11 +14,21 @@
 // Section: Initialisation
 // =============================================================================
 
-/* Initialise the variable to store the power send to the motors and the encoder readings. */
-volatile uint8_t left_motor_power = 0;
-volatile unsigned int left_encoder = 0;
-volatile uint8_t right_motor_power = 0;
-volatile unsigned int right_encoder = 0;
+/* Build a struct for motors, where store the information power, encoder reading value,
+   direction (true is clockwise and false is anti-clockwise), and speed. */
+struct Motor {
+    uint8_t power;
+    unsigned int encoder;
+    bool direction;
+    float speed;
+};
+
+Motor left_motor = {0, 0, 0, 0};
+Motor right_motor = {0, 0, 0, 0};
+// volatile uint8_t left_motor.power = 0;
+// volatile unsigned int left_motor.encoder = 0;
+// volatile uint8_t right_motor.power = 0;
+// volatile unsigned int right_motor.encoder = 0;
 
 /* Build two data type, which use for finite state machine, and store the G-Code command.
    The state of the finite state machine is idle. */
@@ -88,14 +98,31 @@ void setup() {
 }
 
 void loop() {
-    if (Serial.available() > 0) {
-        char c = Serial.read();
-        systemHoming();
-    }
-    if (state == HOMING) {
-      EICRA &= ~(1 << ISC31);
-      EICRB &= ~(1 << ISC41);
-      performHoming();
+    switch (state) {
+        case IDLE:
+            EICRA |= (1 << ISC31);
+            EICRB |= (1 << ISC41);
+            if (Serial.available() > 1) systemParsing();
+            break;
+        case PARSING:
+            right_motor.power = 100;
+            left_motor.power = 100;
+            systemMoving();
+            break;
+        case HOMING:
+            // Reset the logical to any logical change at button generates an interrupt request.
+            EICRA &= ~(1 << ISC31);
+            EICRB &= ~(1 << ISC41);
+            performHoming();
+            break;
+        case MOVING:
+            digitalWrite(M1, LOW);
+            digitalWrite(M2, HIGH);
+            analogWrite(E1, right_motor.power);
+            analogWrite(E2, left_motor.power);
+            break;
+        case ERROR:
+            break;
     }
 }
 
@@ -145,17 +172,17 @@ ISR(TIMER2_OVF_vect) {
 
 ISR(PCINT0_vect) {
     /* When this interrupt triggred by any logic change in corresponding pin, increment the left encoder value */
-    left_encoder++;
-    if (left_encoder >= (ENCODER_RESOLUTION * GEAR_RATIO)) {
-        left_motor_power = 0;   
+    left_motor.encoder++;
+    if (left_motor.encoder >= (ENCODER_RESOLUTION * GEAR_RATIO)) {
+        left_motor.power = 0;   
     }
 }
 
 ISR(PCINT2_vect) {
     /* When this interrupt triggred by any logic change in corresponding pin, increment the right encoder value */
-    right_encoder++;
-    if (right_encoder >= (ENCODER_RESOLUTION * GEAR_RATIO)) {
-        right_motor_power = 0;   
+    right_motor.encoder++;
+    if (right_motor.encoder >= (ENCODER_RESOLUTION * GEAR_RATIO)) {
+        right_motor.power = 0;   
     }
 }
 
@@ -165,8 +192,10 @@ ISR(PCINT2_vect) {
 
 void idleSystem(void) {
     // state = IDLE;
-    left_motor_power = 0;
-    right_motor_power = 0;
+    left_motor.power = 0;
+    right_motor.power = 0;
+    analogWrite(E1, right_motor.power);
+    analogWrite(E2, left_motor.power);
 }
 
 void systemParsing(void) {
@@ -194,61 +223,57 @@ void moveInDistance(float x, float y) {
 }
 
 void performHoming(void) {
-    /* There are 9 steps in the homing procedure. Fast move to left to touch the left button then fast leave.
-       Slow down to touch the left botton again and slowly leave. Once finish, do the same for going down.
-       The last step is stop the motor. */
-    while (homing_step <= 9) {
+    /* There are 8 steps in the homing procedure. Fast move to left to touch the left button then fast leave.
+       Slow down to touch the left botton again and slowly leave. Once finish, do the same for going down. */
+    while (homing_step <= 8) {
         if (homing_step == 1) {
             digitalWrite(M1, LOW);
             digitalWrite(M2, LOW);
-            right_motor_power = 200;
-            left_motor_power = 200;
+            right_motor.power = 200;
+            left_motor.power = 200;
         } else if (homing_step == 2) {
             digitalWrite(M1, HIGH);
             digitalWrite(M2, HIGH);
-            right_motor_power = 200;
-            left_motor_power = 200;
+            right_motor.power = 200;
+            left_motor.power = 200;
         } else if (homing_step == 3) {
             digitalWrite(M1, LOW);
             digitalWrite(M2, LOW);
-            right_motor_power = 100;
-            left_motor_power = 100;
+            right_motor.power = 100;
+            left_motor.power = 100;
         } else if (homing_step == 4) {
             digitalWrite(M1, HIGH);
             digitalWrite(M2, HIGH);
-            right_motor_power = 60;
-            left_motor_power = 60;
+            right_motor.power = 60;
+            left_motor.power = 60;
         } else if (homing_step == 5) {
             digitalWrite(M1, HIGH);
             digitalWrite(M2, LOW);
-            right_motor_power = 210;
-            left_motor_power = 200;
+            right_motor.power = 210;
+            left_motor.power = 200;
         } else if (homing_step == 6) {
             digitalWrite(M1, LOW);
             digitalWrite(M2, HIGH);
-            right_motor_power = 200;
-            left_motor_power = 200;
+            right_motor.power = 200;
+            left_motor.power = 200;
         } else if (homing_step == 7) {
             digitalWrite(M1, HIGH);
             digitalWrite(M2, LOW);
-            right_motor_power = 110;
-            left_motor_power = 100;
+            right_motor.power = 110;
+            left_motor.power = 100;
         } else if (homing_step == 8) {
             digitalWrite(M1, LOW);
             digitalWrite(M2, HIGH);
-            right_motor_power = 60;
-            left_motor_power = 60;
-        } else {
-            right_motor_power = 0;
-            left_motor_power = 0;
-            homing_step++;
+            right_motor.power = 60;
+            left_motor.power = 60;
         }
         
-        analogWrite(E1, right_motor_power);
-        analogWrite(E2, left_motor_power);
+        analogWrite(E1, right_motor.power);
+        analogWrite(E2, left_motor.power);
     }
 
-    // Once homing finish, reset the homing_step.
+    // Once homing finish, send the machine back to idle state and reset the homing_step.
+    idleSystem();
     homing_step = 1;
 }
 
