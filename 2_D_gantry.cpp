@@ -194,32 +194,62 @@ void moveInDistance(float x, float y) {
 }
 
 void performHoming(void) {
-    if (homing_step == 1) {
-        digitalWrite(M1, LOW);
-        digitalWrite(M2, LOW);
-        right_motor_power = 150;
-        left_motor_power = 150;
-    } else if (homing_step ==2) {
-        digitalWrite(M1, HIGH);
-        digitalWrite(M2, HIGH);
-        right_motor_power = 100;
-        left_motor_power = 100;
-    } else if (homing_step == 3) {
-        digitalWrite(M1, HIGH);
-        digitalWrite(M2, LOW);
-        right_motor_power = 160;
-        left_motor_power = 150;
-    } else if (homing_step == 4) {
-        digitalWrite(M1, LOW);
-        digitalWrite(M2, HIGH);
-        right_motor_power = 100;
-        left_motor_power = 100;
-    } else {
-        right_motor_power = 0;
-        left_motor_power = 0;
+    /* There are 9 steps in the homing procedure. Fast move to left to touch the left button then fast leave.
+       Slow down to touch the left botton again and slowly leave. Once finish, do the same for going down.
+       The last step is stop the motor. */
+    while (homing_step <= 9) {
+        if (homing_step == 1) {
+            digitalWrite(M1, LOW);
+            digitalWrite(M2, LOW);
+            right_motor_power = 200;
+            left_motor_power = 200;
+        } else if (homing_step == 2) {
+            digitalWrite(M1, HIGH);
+            digitalWrite(M2, HIGH);
+            right_motor_power = 200;
+            left_motor_power = 200;
+        } else if (homing_step == 3) {
+            digitalWrite(M1, LOW);
+            digitalWrite(M2, LOW);
+            right_motor_power = 100;
+            left_motor_power = 100;
+        } else if (homing_step == 4) {
+            digitalWrite(M1, HIGH);
+            digitalWrite(M2, HIGH);
+            right_motor_power = 60;
+            left_motor_power = 60;
+        } else if (homing_step == 5) {
+            digitalWrite(M1, HIGH);
+            digitalWrite(M2, LOW);
+            right_motor_power = 210;
+            left_motor_power = 200;
+        } else if (homing_step == 6) {
+            digitalWrite(M1, LOW);
+            digitalWrite(M2, HIGH);
+            right_motor_power = 200;
+            left_motor_power = 200;
+        } else if (homing_step == 7) {
+            digitalWrite(M1, HIGH);
+            digitalWrite(M2, LOW);
+            right_motor_power = 110;
+            left_motor_power = 100;
+        } else if (homing_step == 8) {
+            digitalWrite(M1, LOW);
+            digitalWrite(M2, HIGH);
+            right_motor_power = 60;
+            left_motor_power = 60;
+        } else {
+            right_motor_power = 0;
+            left_motor_power = 0;
+            homing_step++;
+        }
+        
+        analogWrite(E1, right_motor_power);
+        analogWrite(E2, left_motor_power);
     }
-    analogWrite(E1, right_motor_power);
-    analogWrite(E2, left_motor_power);
+
+    // Once homing finish, reset the homing_step.
+    homing_step = 1;
 }
 
 
