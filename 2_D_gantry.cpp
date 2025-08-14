@@ -11,7 +11,7 @@
 #define DEBOUNCE_COUNT 2
 
 // =============================================================================
-// Section: Initialisation
+// Section: Initialise Global Variable
 // =============================================================================
 
 /* Build a struct for motors, where store the information power, encoder reading value,
@@ -36,6 +36,7 @@ enum MachineState {IDLE, PARSING, MOVING, HOMING, ERROR};
 MachineState state = IDLE;
 struct GCode {int g; float x; float y; float f;};
 GCode command = {0, 0, 0, 0};
+String input_g_code = "";
 
 /* Initilise the variable to count the time that the timer 3 overflow as a clock.
    The array represent the time that the button interrupt last triggered, each element corresponds to
@@ -44,14 +45,19 @@ volatile uint16_t clock = 0;
 volatile uint16_t last_clock[4] = {0};
 volatile int homing_step = 1;
 
-/* Help functions are initialised here. */
+// =============================================================================
+// Section: Function Prototypes
+// =============================================================================
+
 void idleSystem(void);
 void systemParsing(void);
 void systemHoming(void);
 void systemMoving(void);
 bool switchDebounce(int button_number);
 void moveInDistance(float x, float y);
+void processGCode(String line);
 void performHoming(void);
+
 
 // =============================================================================
 // Section: Setup and Main Loop
@@ -105,9 +111,18 @@ void loop() {
             if (Serial.available() > 1) systemParsing();
             break;
         case PARSING:
-            right_motor.power = 100;
-            left_motor.power = 100;
-            systemMoving();
+            if (Serial.available() > 0) {
+                char c = Serial.read();
+                if (c != '\n' && c != '\r') {
+                    input_g_code += c;
+                } else {
+                    processGCode(input_g_code);
+                    input_g_code = "";
+                    PrintCommand();
+                }
+            }
+            
+            if (command.g == 28) systemHoming();
             break;
         case HOMING:
             // Reset the logical to any logical change at button generates an interrupt request.
@@ -136,13 +151,15 @@ ISR(INT2_vect) {
         idleSystem();
         Serial.println("Top button pressed.");
     }
-    
 }
 
 // External interrupt 2 is triggered on the rising edge when the bottom button is pressed.
 ISR(INT3_vect) {
     if (switchDebounce(1)) {
-        if (state == HOMING) homing_step++;;
+        if (state == HOMING) {
+            homing_step++;
+            return;
+        }
         idleSystem();
         Serial.println("Bottom button pressed.");
     }
@@ -151,11 +168,13 @@ ISR(INT3_vect) {
 // External interrupt 2 is triggered on the rising edge when the left button is pressed.
 ISR(INT4_vect) {
     if (switchDebounce(2)) {
-        if (state == HOMING) homing_step++;
+        if (state == HOMING) {
+            homing_step++;
+            return;
+        }
         idleSystem();
         Serial.println("Left button pressed.");
     }
-    
 }
 
 // External interrupt 2 is triggered on the rising edge when the right button is pressed.
@@ -191,7 +210,7 @@ ISR(PCINT2_vect) {
 // =============================================================================
 
 void idleSystem(void) {
-    // state = IDLE;
+    state = IDLE;
     left_motor.power = 0;
     right_motor.power = 0;
     analogWrite(E1, right_motor.power);
@@ -222,59 +241,81 @@ void moveInDistance(float x, float y) {
 
 }
 
+void processGCode(String line) {
+    // Parse character-by-character
+    int i = 0;
+    while (i < line.length()) {
+        char letter = line[i++];
+        if (letter < 65 || letter >122 || (letter > 90 && letter < 97)) { continue;}
+
+        // Gather number after the letter
+        String numberStr = "";
+        while (i < line.length() && (isDigit(line[i]) || line[i] == '.' || line[i] == ' ')) {
+            numberStr += line[i++];
+        }
+        float value = numberStr.toFloat();
+
+        switch (letter) {
+            case 'G': case 'g': command.g = (int)value; break;
+            case 'X': case 'x': command.x = value; break;
+            case 'Y': case 'y': command.y = value; break;
+            case 'F': case 'f': command.f = value; break;
+        }
+    }
+}
+
 void performHoming(void) {
     /* There are 8 steps in the homing procedure. Fast move to left to touch the left button then fast leave.
-       Slow down to touch the left botton again and slowly leave. Once finish, do the same for going down. */
-    while (homing_step <= 8) {
-        if (homing_step == 1) {
-            digitalWrite(M1, LOW);
-            digitalWrite(M2, LOW);
-            right_motor.power = 200;
-            left_motor.power = 200;
-        } else if (homing_step == 2) {
-            digitalWrite(M1, HIGH);
-            digitalWrite(M2, HIGH);
-            right_motor.power = 200;
-            left_motor.power = 200;
-        } else if (homing_step == 3) {
-            digitalWrite(M1, LOW);
-            digitalWrite(M2, LOW);
-            right_motor.power = 100;
-            left_motor.power = 100;
-        } else if (homing_step == 4) {
-            digitalWrite(M1, HIGH);
-            digitalWrite(M2, HIGH);
-            right_motor.power = 60;
-            left_motor.power = 60;
-        } else if (homing_step == 5) {
-            digitalWrite(M1, HIGH);
-            digitalWrite(M2, LOW);
-            right_motor.power = 210;
-            left_motor.power = 200;
-        } else if (homing_step == 6) {
-            digitalWrite(M1, LOW);
-            digitalWrite(M2, HIGH);
-            right_motor.power = 200;
-            left_motor.power = 200;
-        } else if (homing_step == 7) {
-            digitalWrite(M1, HIGH);
-            digitalWrite(M2, LOW);
-            right_motor.power = 110;
-            left_motor.power = 100;
-        } else if (homing_step == 8) {
-            digitalWrite(M1, LOW);
-            digitalWrite(M2, HIGH);
-            right_motor.power = 60;
-            left_motor.power = 60;
-        }
-        
-        analogWrite(E1, right_motor.power);
-        analogWrite(E2, left_motor.power);
+       Slow down to touch the left botton again and slowly leave. Once finish, do the same for going down. 
+       Once the homing step is not within the range, that means either the homing finish or something going wrong.
+       Send the machine to idle state and reset the homing_step.*/
+    if (homing_step == 1) {
+        digitalWrite(M1, LOW);
+        digitalWrite(M2, LOW);
+        right_motor.power = 200;
+        left_motor.power = 200;
+    } else if (homing_step == 2) {
+        digitalWrite(M1, HIGH);
+        digitalWrite(M2, HIGH);
+        right_motor.power = 200;
+        left_motor.power = 200;
+    } else if (homing_step == 3) {
+        digitalWrite(M1, LOW);
+        digitalWrite(M2, LOW);
+        right_motor.power = 100;
+        left_motor.power = 100;
+    } else if (homing_step == 4) {
+        digitalWrite(M1, HIGH);
+        digitalWrite(M2, HIGH);
+        right_motor.power = 60;
+        left_motor.power = 60;
+    } else if (homing_step == 5) {
+        digitalWrite(M1, HIGH);
+        digitalWrite(M2, LOW);
+        right_motor.power = 210;
+        left_motor.power = 200;
+    } else if (homing_step == 6) {
+        digitalWrite(M1, LOW);
+        digitalWrite(M2, HIGH);
+        right_motor.power = 200;
+        left_motor.power = 200;
+    } else if (homing_step == 7) {
+        digitalWrite(M1, HIGH);
+        digitalWrite(M2, LOW);
+        right_motor.power = 110;
+        left_motor.power = 100;
+    } else if (homing_step == 8) {
+        digitalWrite(M1, LOW);
+        digitalWrite(M2, HIGH);
+        right_motor.power = 60;
+        left_motor.power = 60;
+    } else {
+        idleSystem();
+        homing_step = 1;
     }
 
-    // Once homing finish, send the machine back to idle state and reset the homing_step.
-    idleSystem();
-    homing_step = 1;
+    analogWrite(E1, right_motor.power);
+    analogWrite(E2, left_motor.power);
 }
 
 
