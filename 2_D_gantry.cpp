@@ -45,7 +45,9 @@ volatile uint16_t clock = 0;
 volatile uint16_t last_clock[4] = {0};
 volatile int homing_step = 1;
 
+/* Initilise the variable the store the time for an error occur, and the time to start clear the error*/
 volatile uint16_t error_occur_time = 0;
+volatile uint16_t error_clear_time = 0;
 
 // =============================================================================
 // Section: Function Prototypes
@@ -129,6 +131,7 @@ void loop() {
             }
             
             if (command.g == 28) systemHoming();
+            if (command.g == 1) systemMoving();
             break;
         case HOMING:
             // Reset the logical to any logical change at button generates an interrupt request.
@@ -139,25 +142,38 @@ void loop() {
         case MOVING:
             digitalWrite(M1, LOW);
             digitalWrite(M2, HIGH);
-            analogWrite(E1, right_motor.power);
-            analogWrite(E2, left_motor.power);
+            analogWrite(E1, 100);
+            analogWrite(E2, 100);
             break;
         case ERROR:
-        /* When error occur, stop all the motor and reset everything. Check which button is triggering.
-           Move the motor in the opposite direction to the triggering button to leave the error state. */
-            stopMotor();
-            homing_step = 1;
-            if (PIND & (1 << PD2)) {
-                
-            } else if (PIND & (1 << PD3)) {
-                
-            }else if (PINE & (1 << PE4)) {
-                
-            } else if (PINE & (1 << PE5)) {
-                
-            } else {
-                if (clock - error_occur_time > DEBOUNCE_COUNT);
-                idleSystem();
+        /* When error occur, stop all the motor and reset everything. Give the user 10 seconds to check the error.
+           If the error persists after 10 seconds, check which button is triggering every seconds.
+           Move the motor in the opposite direction to the triggering button to leave the error state. 
+           Once get into safe position, return home position. */
+            if ((clock - error_occur_time > 610) && (clock - error_clear_time > 61)) {
+                error_clear_time = clock;
+                if (PIND & (1 << PD2)) {
+                    digitalWrite(M1, HIGH);
+                    digitalWrite(M2, LOW);
+                } else if (PIND & (1 << PD3)) {
+                    digitalWrite(M1, LOW);
+                    digitalWrite(M2, HIGH);
+                }else if (PINE & (1 << PE4)) {
+                    digitalWrite(M1, HIGH);
+                    digitalWrite(M2, HIGH);
+                } else if (PINE & (1 << PE5)) {
+                    digitalWrite(M1, LOW);
+                    digitalWrite(M2, LOW);
+                } else {
+                    Serial.println("Error condition cleared. System returns to home position now.");
+                    systemHoming();
+                    break;
+                }
+                analogWrite(E1, 100);
+                analogWrite(E2, 100);
+            } else if (clock - error_occur_time <= 610) {
+                stopMotor();
+                homing_step = 1;
             }
             break;
     }
@@ -171,7 +187,6 @@ void loop() {
 ISR(INT2_vect) {
     if (switchDebounce(0)) {
         systemError();
-        Serial.println("Top button pressed.");
     }
 }
 
@@ -183,7 +198,6 @@ ISR(INT3_vect) {
             return;
         }
         systemError();
-        Serial.println("Bottom button pressed.");
     }
 }
 
@@ -195,7 +209,6 @@ ISR(INT4_vect) {
             return;
         }
         systemError();
-        Serial.println("Left button pressed.");
     }
 }
 
@@ -203,7 +216,6 @@ ISR(INT4_vect) {
 ISR(INT5_vect) {
     if (switchDebounce(3)) {
         systemError();
-        Serial.println("Right button pressed.");
     }
 }
 
@@ -244,17 +256,20 @@ void systemParsing(void) {
 }
 
 void systemHoming(void) {
-    command.g = 0;
     state = HOMING;
+    command.g = 0;
 }
 
 void systemMoving(void) {
     state = MOVING;
+    command.g = 0;
 }
 
 void systemError(void) {
     state = ERROR;
     error_occur_time = clock;
+    Serial.print("Error detected — please check the issue and take action. ");
+    Serial.println("If the error persists after 10 seconds, the machine will automatically move to a safe position.");
 }
 
 bool switchDebounce(int button_number) {
