@@ -45,6 +45,8 @@ volatile uint16_t clock = 0;
 volatile uint16_t last_clock[4] = {0};
 volatile int homing_step = 1;
 
+volatile uint16_t error_occur_time = 0;
+
 // =============================================================================
 // Section: Function Prototypes
 // =============================================================================
@@ -53,7 +55,9 @@ void idleSystem(void);
 void systemParsing(void);
 void systemHoming(void);
 void systemMoving(void);
+void systemError(void);
 bool switchDebounce(int button_number);
+void stopMotor(void);
 void moveInDistance(float x, float y);
 void processGCode(String line);
 void performHoming(void);
@@ -108,7 +112,8 @@ void loop() {
         case IDLE:
             EICRA |= (1 << ISC31);
             EICRB |= (1 << ISC41);
-            if (Serial.available() > 1) systemParsing();
+            stopMotor();
+            if (Serial.available() > 0) systemParsing();
             break;
         case PARSING:
             if (Serial.available() > 0) {
@@ -118,8 +123,9 @@ void loop() {
                 } else {
                     processGCode(input_g_code);
                     input_g_code = "";
-                    PrintCommand();
                 }
+            } else {
+                idleSystem();
             }
             
             if (command.g == 28) systemHoming();
@@ -137,6 +143,22 @@ void loop() {
             analogWrite(E2, left_motor.power);
             break;
         case ERROR:
+        /* When error occur, stop all the motor and reset everything. Check which button is triggering.
+           Move the motor in the opposite direction to the triggering button to leave the error state. */
+            stopMotor();
+            homing_step = 1;
+            if (PIND & (1 << PD2)) {
+                
+            } else if (PIND & (1 << PD3)) {
+                
+            }else if (PINE & (1 << PE4)) {
+                
+            } else if (PINE & (1 << PE5)) {
+                
+            } else {
+                if (clock - error_occur_time > DEBOUNCE_COUNT);
+                idleSystem();
+            }
             break;
     }
 }
@@ -148,7 +170,7 @@ void loop() {
 // External interrupt 2 is triggered on the rising edge when the top button is pressed.
 ISR(INT2_vect) {
     if (switchDebounce(0)) {
-        idleSystem();
+        systemError();
         Serial.println("Top button pressed.");
     }
 }
@@ -160,7 +182,7 @@ ISR(INT3_vect) {
             homing_step++;
             return;
         }
-        idleSystem();
+        systemError();
         Serial.println("Bottom button pressed.");
     }
 }
@@ -172,7 +194,7 @@ ISR(INT4_vect) {
             homing_step++;
             return;
         }
-        idleSystem();
+        systemError();
         Serial.println("Left button pressed.");
     }
 }
@@ -180,7 +202,7 @@ ISR(INT4_vect) {
 // External interrupt 2 is triggered on the rising edge when the right button is pressed.
 ISR(INT5_vect) {
     if (switchDebounce(3)) {
-        idleSystem();
+        systemError();
         Serial.println("Right button pressed.");
     }
 }
@@ -211,10 +233,10 @@ ISR(PCINT2_vect) {
 
 void idleSystem(void) {
     state = IDLE;
-    left_motor.power = 0;
-    right_motor.power = 0;
-    analogWrite(E1, right_motor.power);
-    analogWrite(E2, left_motor.power);
+    // left_motor.power = 0;
+    // right_motor.power = 0;
+    // analogWrite(E1, right_motor.power);
+    // analogWrite(E2, left_motor.power);
 }
 
 void systemParsing(void) {
@@ -222,11 +244,17 @@ void systemParsing(void) {
 }
 
 void systemHoming(void) {
+    command.g = 0;
     state = HOMING;
 }
 
 void systemMoving(void) {
     state = MOVING;
+}
+
+void systemError(void) {
+    state = ERROR;
+    error_occur_time = clock;
 }
 
 bool switchDebounce(int button_number) {
@@ -235,6 +263,13 @@ bool switchDebounce(int button_number) {
         return true;
     } 
     return false;
+}
+
+void stopMotor(void) {
+    left_motor.power = 0;
+    right_motor.power = 0;
+    analogWrite(E1, right_motor.power);
+    analogWrite(E2, left_motor.power);
 }
 
 void moveInDistance(float x, float y) {
@@ -246,7 +281,7 @@ void processGCode(String line) {
     int i = 0;
     while (i < line.length()) {
         char letter = line[i++];
-        if (letter < 65 || letter >122 || (letter > 90 && letter < 97)) { continue;}
+        if (letter < 65 || letter >122 || (letter > 90 && letter < 97)) { continue; }
 
         // Gather number after the letter
         String numberStr = "";
@@ -317,60 +352,3 @@ void performHoming(void) {
     analogWrite(E1, right_motor.power);
     analogWrite(E2, left_motor.power);
 }
-
-
-
-
-
-// String input_g_code = "";
-// struct GCode {int g; float x; float y; float f;};
-// GCode cmd = {0, 0, 0, 0};
-
-// void PrintCommand() {
-//   Serial.println(cmd.g);
-//   Serial.println(cmd.x);
-//   Serial.println(cmd.y);
-//   Serial.println(cmd.f);
-// }
-
-// void ProcessGCode(String line) {
-
-//   // Parse character-by-character
-//   int i = 0;
-//   while (i < line.length()) {
-//     char letter = line[i++];
-//     if (letter < 65 || letter >122 || (letter > 90 && letter < 97)) { continue;}
-
-//     // Gather number after the letter
-//     String numberStr = "";
-//     while (i < line.length() && (isDigit(line[i]) || line[i] == '.' || line[i] == ' ')) {
-//       numberStr += line[i++];
-//     }
-//     float value = numberStr.toFloat();
-
-//     switch (letter) {
-//       case 'G': case 'g': cmd.g = (int)value; break;
-//       case 'X': case 'x': cmd.x = value; break;
-//       case 'Y': case 'y': cmd.y = value; break;
-//       case 'F': case 'f': cmd.f = value; break;
-//     }
-//   }
-// }
-
-// void setup() {
-//   Serial.begin(9600);
-// }
-
-// void loop() {
-//   if (Serial.available() > 0) {
-//         char c = Serial.read();
-//         if (c != '\n' && c != '\r') {
-//           input_g_code += c;
-//         } else {
-//           Serial.println(input_g_code);
-//           ProcessGCode(input_g_code);
-//           input_g_code = "";
-//           PrintCommand();
-//         }
-//     }
-// }
