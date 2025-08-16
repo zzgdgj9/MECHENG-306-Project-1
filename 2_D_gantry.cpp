@@ -287,6 +287,15 @@ void stopMotor(void) {
     analogWrite(E2, left_motor.power);
 }
 
+void moveUp(uint8_t power, float distance = NAN) {
+    if (distance = NAN) {
+        digitalWrite(M1, LOW);
+        digitalWrite(M2, HIGH);
+        analogWrite(E1, power);
+        analogWrite(E2, power);
+    } else {}
+}
+
 void moveInDistance(float x, float y) {
 
 }
