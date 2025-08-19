@@ -60,6 +60,7 @@ void systemMoving(void);
 void systemError(void);
 bool switchDebounce(int button_number);
 void stopMotor(void);
+void moveInDirection(char direction, uint8_t power);
 void moveInDistance(float x, float y);
 void processGCode(String line);
 void performHoming(void);
@@ -256,8 +257,11 @@ void systemParsing(void) {
 }
 
 void systemHoming(void) {
+    /* Change the state of the machine to HOMING, clear the G command and the encoder value. */
     state = HOMING;
     command.g = 0;
+    left_motor.encoder = 0;
+    right_motor.encoder = 0;
 }
 
 void systemMoving(void) {
@@ -287,13 +291,39 @@ void stopMotor(void) {
     analogWrite(E2, left_motor.power);
 }
 
-void moveUp(uint8_t power, float distance = NAN) {
-    if (distance = NAN) {
+// void moveUp(uint8_t power, float distance = NAN) {
+//     if (distance = NAN) {
+//         digitalWrite(M1, LOW);
+//         digitalWrite(M2, HIGH);
+//         analogWrite(E1, power);
+//         analogWrite(E2, power);
+//     } else {}
+// }
+
+void moveInDirection(char direction, uint8_t power) {
+    /* Calculate the half of the difference between the left and right encoder value,
+       then change the left and right motor power in order to get rid off this difference. */
+    int error = (left_motor.encoder - right_motor.encoder) / 2;
+    float k_p = 0.1;
+    left_motor.power = power - k_p * error;
+    right_motor.power = power + k_p * error;
+
+    /* Depends on the input, set up the direction to move. */
+    if (direction == 'U') {
         digitalWrite(M1, LOW);
         digitalWrite(M2, HIGH);
-        analogWrite(E1, power);
-        analogWrite(E2, power);
-    } else {}
+    } else if (direction == 'D') {
+        digitalWrite(M1, HIGH);
+        digitalWrite(M2, LOW);
+    } else if (direction == 'L') {
+        digitalWrite(M1, LOW);
+        digitalWrite(M2, LOW);
+    } else if (direction == 'R') {
+        digitalWrite(M1, HIGH);
+        digitalWrite(M2, HIGH);
+    }
+    analogWrite(E1, right_motor.power);
+    analogWrite(E2, left_motor.power);
 }
 
 void moveInDistance(float x, float y) {
@@ -327,52 +357,27 @@ void performHoming(void) {
     /* There are 8 steps in the homing procedure. Fast move to left to touch the left button then fast leave.
        Slow down to touch the left botton again and slowly leave. Once finish, do the same for going down. 
        Once the homing step is not within the range, that means either the homing finish or something going wrong.
-       Send the machine to idle state and reset the homing_step.*/
+       Send the machine to idle state and reset the homing_step. Clear the encoder value to set the origin. */
     if (homing_step == 1) {
-        digitalWrite(M1, LOW);
-        digitalWrite(M2, LOW);
-        right_motor.power = 200;
-        left_motor.power = 200;
+        moveInDirection('L', 200);
     } else if (homing_step == 2) {
-        digitalWrite(M1, HIGH);
-        digitalWrite(M2, HIGH);
-        right_motor.power = 200;
-        left_motor.power = 200;
+        moveInDirection('R', 200);
     } else if (homing_step == 3) {
-        digitalWrite(M1, LOW);
-        digitalWrite(M2, LOW);
-        right_motor.power = 100;
-        left_motor.power = 100;
+        moveInDirection('L', 100);
     } else if (homing_step == 4) {
-        digitalWrite(M1, HIGH);
-        digitalWrite(M2, HIGH);
-        right_motor.power = 60;
-        left_motor.power = 60;
+        moveInDirection('R', 60);
     } else if (homing_step == 5) {
-        digitalWrite(M1, HIGH);
-        digitalWrite(M2, LOW);
-        right_motor.power = 210;
-        left_motor.power = 200;
+        moveInDirection('D', 200);
     } else if (homing_step == 6) {
-        digitalWrite(M1, LOW);
-        digitalWrite(M2, HIGH);
-        right_motor.power = 200;
-        left_motor.power = 200;
+        moveInDirection('U', 200);
     } else if (homing_step == 7) {
-        digitalWrite(M1, HIGH);
-        digitalWrite(M2, LOW);
-        right_motor.power = 110;
-        left_motor.power = 100;
+        moveInDirection('D', 100);
     } else if (homing_step == 8) {
-        digitalWrite(M1, LOW);
-        digitalWrite(M2, HIGH);
-        right_motor.power = 60;
-        left_motor.power = 60;
+        moveInDirection('U', 60);
     } else {
         idleSystem();
         homing_step = 1;
+        left_motor.encoder = 0;
+        right_motor.encoder = 0;
     }
-
-    analogWrite(E1, right_motor.power);
-    analogWrite(E2, left_motor.power);
 }
