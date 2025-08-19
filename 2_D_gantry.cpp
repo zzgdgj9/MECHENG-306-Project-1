@@ -18,7 +18,7 @@
    direction (true is clockwise and false is anti-clockwise), and speed. */
 struct Motor {
     uint8_t power;
-    unsigned int encoder;
+    long encoder;
     bool direction;
     float speed;
 };
@@ -59,6 +59,7 @@ void systemHoming(void);
 void systemMoving(void);
 void systemError(void);
 bool switchDebounce(int button_number);
+uint8_t sendPower(int power);
 void stopMotor(void);
 void moveInDirection(char direction, uint8_t power);
 void moveInDistance(float x, float y);
@@ -225,19 +226,17 @@ ISR(TIMER2_OVF_vect) {
 }
 
 ISR(PCINT0_vect) {
-    /* When this interrupt triggred by any logic change in corresponding pin, increment the left encoder value */
-    left_motor.encoder++;
-    if (left_motor.encoder >= (ENCODER_RESOLUTION * GEAR_RATIO)) {
-        left_motor.power = 0;   
-    }
+    /* When this interrupt triggred by any logic change in corresponding pin, change the left encoder value.
+       If motor rotate CCW, increment the value. If motor rotate CW, decrement the value. */
+    if (digitalRead(M2)) left_motor.encoder++;
+    if (!digitalRead(M2)) left_motor.encoder--;
 }
 
 ISR(PCINT2_vect) {
-    /* When this interrupt triggred by any logic change in corresponding pin, increment the right encoder value */
-    right_motor.encoder++;
-    if (right_motor.encoder >= (ENCODER_RESOLUTION * GEAR_RATIO)) {
-        right_motor.power = 0;   
-    }
+    /* When this interrupt triggred by any logic change in corresponding pin, change the right encoder value.
+       If motor rotate CCW, increment the value. If motor rotate CW, decrement the value. */
+    if (digitalRead(M1)) right_motor.encoder++;
+    if (!digitalRead(M1)) right_motor.encoder--;
 }
 
 // =============================================================================
@@ -284,9 +283,19 @@ bool switchDebounce(int button_number) {
     return false;
 }
 
+uint8_t sendPower(int power) {
+    if (power < 0) {
+        return 0;
+    } else if (power > 255) {
+        return 255;
+    } else {
+        return power;
+    }
+}
+
 void stopMotor(void) {
-    left_motor.power = 0;
-    right_motor.power = 0;
+    left_motor.power = sendPower(0);
+    right_motor.power = sendPower(0);
     analogWrite(E1, right_motor.power);
     analogWrite(E2, left_motor.power);
 }
@@ -303,10 +312,10 @@ void stopMotor(void) {
 void moveInDirection(char direction, uint8_t power) {
     /* Calculate the half of the difference between the left and right encoder value,
        then change the left and right motor power in order to get rid off this difference. */
-    int error = (left_motor.encoder - right_motor.encoder) / 2;
-    float k_p = 0.1;
-    left_motor.power = power - k_p * error;
-    right_motor.power = power + k_p * error;
+    int error = abs(left_motor.encoder) - abs(right_motor.encoder);
+    float k_p = 10;
+    left_motor.power = sendPower(power - k_p * error);
+    right_motor.power = sendPower(power + k_p * error);
 
     /* Depends on the input, set up the direction to move. */
     if (direction == 'U') {
