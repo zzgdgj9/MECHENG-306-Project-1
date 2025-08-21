@@ -27,10 +27,6 @@ struct Motor {
 
 Motor left_motor = {0, 0, 0, 0, 0, 0};
 Motor right_motor = {0, 0, 0, 0, 0, 0};
-// volatile uint8_t left_motor.power = 0;
-// volatile unsigned int left_motor.encoder = 0;
-// volatile uint8_t right_motor.power = 0;
-// volatile unsigned int right_motor.encoder = 0;
 
 /* Build two data type, which use for finite state machine, and store the G-Code command.
    The state of the finite state machine is idle. */
@@ -45,7 +41,7 @@ String input_g_code = "";
    top, button, left and right. homing_step shows the current step when the machine do homing. */
 volatile uint16_t clock = 0;
 volatile uint16_t last_clock[4] = {0};
-volatile int homing_step = 1;
+volatile uint8_t homing_step = 1;
 
 /* Initilise the variable the store the time for an error occur, and the time to start clear the error*/
 volatile uint16_t error_occur_time = 0;
@@ -119,8 +115,6 @@ void setup() {
 void loop() {
     switch (state) {
         case IDLE:
-            EICRA |= (1 << ISC31);
-            EICRB |= (1 << ISC41);
             stopMotor();
             if (Serial.available() > 0) systemParsing();
             break;
@@ -142,8 +136,6 @@ void loop() {
             break;
         case HOMING:
             // Reset the logical to any logical change at button generates an interrupt request.
-            EICRA &= ~(1 << ISC31);
-            EICRB &= ~(1 << ISC41);
             performHoming();
             break;
         case MOVING:
@@ -225,6 +217,14 @@ ISR(INT5_vect) {
 
 ISR(TIMER2_OVF_vect) {
     clock++;
+
+    /* If the machine is undergoing moving or homing, then everytime the interrupt triggered, calculate the speed. */
+    if (state == MOVING || state == HOMING) {
+        left_motor.speed = (left_motor.encoder - left_motor.previous_encoder) / 0.016384;
+        right_motor.speed = (right_motor.encoder - right_motor.previous_encoder) / 0.016384;
+        left_motor.previous_encoder = left_motor.encoder;
+        right_motor.previous_encoder = right_motor.encoder;
+    }
 }
 
 ISR(PCINT0_vect) {
@@ -247,10 +247,9 @@ ISR(PCINT2_vect) {
 
 void idleSystem(void) {
     state = IDLE;
-    // left_motor.power = 0;
-    // right_motor.power = 0;
-    // analogWrite(E1, right_motor.power);
-    // analogWrite(E2, left_motor.power);
+    EICRA |= (1 << ISC31);
+    EICRB |= (1 << ISC41);
+    stopMotor();
 }
 
 void systemParsing(void) {
@@ -260,6 +259,8 @@ void systemParsing(void) {
 void systemHoming(void) {
     /* Change the state of the machine to HOMING, clear the G command and the encoder value. */
     state = HOMING;
+    EICRA &= ~(1 << ISC31);
+    EICRB &= ~(1 << ISC41);
     command.g = 0;
     left_motor.encoder = 0;
     right_motor.encoder = 0;
@@ -307,13 +308,13 @@ bool motorFullyStopped(void) {
 }
 
 void resetOrigin(void) {
-    while (!motorFullyStopped()) {}
+    while (!motorFullyStopped()) { asm("nop"); }
     left_motor.encoder = 0;
     right_motor.encoder = 0;
 }
 
 void updateLastStop(void) {
-    while (!motorFullyStopped()) {}
+    while (!motorFullyStopped()) { asm("nop"); }
     left_motor.last_stop = left_motor.encoder;
     right_motor.last_stop = right_motor.encoder;
 }
@@ -380,23 +381,27 @@ void performHoming(void) {
        Send the machine to idle state and reset the homing_step. Clear the encoder value to set the origin. */
     if (homing_step == 1) {
         moveInDirection('L', 200);
-    } else if (homing_step == 2) {
-        moveInDirection('R', 200);
     } else if (homing_step == 3) {
-        moveInDirection('L', 100);
-    } else if (homing_step == 4) {
-        moveInDirection('R', 60);
+        moveInDirection('R', 200);
     } else if (homing_step == 5) {
-        moveInDirection('D', 200);
-    } else if (homing_step == 6) {
-        moveInDirection('U', 200);
+        moveInDirection('L', 100);
     } else if (homing_step == 7) {
+        moveInDirection('R', 60);
+    } else if (homing_step == 9) {
+        moveInDirection('D', 200);
+    } else if (homing_step == 11) {
+        moveInDirection('U', 200);
+    } else if (homing_step == 13) {
         moveInDirection('D', 100);
-    } else if (homing_step == 8) {
+    } else if (homing_step == 15) {
         moveInDirection('U', 60);
-    } else {
+    } else if (homing_step == 16) {
         idleSystem();
         homing_step = 1;
         resetOrigin();
+    } else {
+        stopMotor();
+        updateLastStop();
+        homing_step++;
     }
 }
