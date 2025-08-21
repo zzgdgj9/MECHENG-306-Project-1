@@ -63,6 +63,9 @@ void systemError(void);
 bool switchDebounce(int button_number);
 uint8_t sendPower(int power);
 void stopMotor(void);
+bool motorFullyStopped(void);
+void resetOrigin(void);
+void updateLastStop(void);
 void moveInDirection(char direction, uint8_t power);
 void moveInDistance(float x, float y);
 void processGCode(String line);
@@ -299,14 +302,21 @@ void stopMotor(void) {
     analogWrite(E2, left_motor.power);
 }
 
-// void moveUp(uint8_t power, float distance = NAN) {
-//     if (distance = NAN) {
-//         digitalWrite(M1, LOW);
-//         digitalWrite(M2, HIGH);
-//         analogWrite(E1, power);
-//         analogWrite(E2, power);
-//     } else {}
-// }
+bool motorFullyStopped(void) {
+    return ((left_motor.speed == 0) && (right_motor.speed == 0));
+}
+
+void resetOrigin(void) {
+    while (!motorFullyStopped()) {}
+    left_motor.encoder = 0;
+    right_motor.encoder = 0;
+}
+
+void updateLastStop(void) {
+    while (!motorFullyStopped()) {}
+    left_motor.last_stop = left_motor.encoder;
+    right_motor.last_stop = right_motor.encoder;
+}
 
 void moveInDirection(char direction, uint8_t power) {
     /* Calculate the difference between the left and right encoder value, calculate kp base on the power,
@@ -387,7 +397,6 @@ void performHoming(void) {
     } else {
         idleSystem();
         homing_step = 1;
-        left_motor.encoder = 0;
-        right_motor.encoder = 0;
+        resetOrigin();
     }
 }
