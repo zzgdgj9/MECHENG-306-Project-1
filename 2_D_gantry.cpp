@@ -19,12 +19,14 @@
 struct Motor {
     uint8_t power;
     long encoder;
+    long previous_encoder;
+    long last_stop;
     bool direction;
     float speed;
 };
 
-Motor left_motor = {0, 0, 0, 0};
-Motor right_motor = {0, 0, 0, 0};
+Motor left_motor = {0, 0, 0, 0, 0, 0};
+Motor right_motor = {0, 0, 0, 0, 0, 0};
 // volatile uint8_t left_motor.power = 0;
 // volatile unsigned int left_motor.encoder = 0;
 // volatile uint8_t right_motor.power = 0;
@@ -142,10 +144,7 @@ void loop() {
             performHoming();
             break;
         case MOVING:
-            digitalWrite(M1, LOW);
-            digitalWrite(M2, HIGH);
-            analogWrite(E1, 100);
-            analogWrite(E2, 100);
+            moveInDirection('U', 100);
             break;
         case ERROR:
         /* When error occur, stop all the motor and reset everything. Give the user 10 seconds to check the error.
@@ -310,10 +309,12 @@ void stopMotor(void) {
 // }
 
 void moveInDirection(char direction, uint8_t power) {
-    /* Calculate the half of the difference between the left and right encoder value,
+    /* Calculate the difference between the left and right encoder value, calculate kp base on the power,
        then change the left and right motor power in order to get rid off this difference. */
-    int error = abs(left_motor.encoder) - abs(right_motor.encoder);
-    float k_p = 10;
+    unsigned int left_difference = abs(left_motor.encoder - left_motor.last_stop);
+    unsigned int right_difference = abs(right_motor.encoder - right_motor.last_stop);
+    int error = left_difference - right_difference;
+    float k_p = 1 + power / 100;
     left_motor.power = sendPower(power - k_p * error);
     right_motor.power = sendPower(power + k_p * error);
 
