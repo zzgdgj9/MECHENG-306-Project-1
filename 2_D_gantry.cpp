@@ -43,10 +43,6 @@ volatile uint16_t clock = 0;
 volatile uint16_t last_clock[4] = {0};
 volatile uint8_t homing_step = 1;
 
-/* Initilise the variable the store the time for an error occur, and the time to start clear the error*/
-volatile uint16_t error_occur_time = 0;
-volatile uint16_t error_clear_time = 0;
-
 // =============================================================================
 // Section: Function Prototypes
 // =============================================================================
@@ -116,6 +112,7 @@ void loop() {
     switch (state) {
         case IDLE:
             stopMotor();
+            updateLastStop();
             if (Serial.available() > 0) systemParsing();
             break;
         case PARSING:
@@ -142,36 +139,20 @@ void loop() {
             moveInDirection('U', 100);
             break;
         case ERROR:
-        /* When error occur, stop all the motor and reset everything. Give the user 10 seconds to check the error.
-           If the error persists after 10 seconds, check which button is triggering every seconds.
-           Move the motor in the opposite direction to the triggering button to leave the error state. 
-           Once get into safe position, return home position. */
-            if ((clock - error_occur_time > 610) && (clock - error_clear_time > 61)) {
-                error_clear_time = clock;
-                if (PIND & (1 << PD2)) {
-                    digitalWrite(M1, HIGH);
-                    digitalWrite(M2, LOW);
-                } else if (PIND & (1 << PD3)) {
-                    digitalWrite(M1, LOW);
-                    digitalWrite(M2, HIGH);
-                }else if (PINE & (1 << PE4)) {
-                    digitalWrite(M1, HIGH);
-                    digitalWrite(M2, HIGH);
-                } else if (PINE & (1 << PE5)) {
-                    digitalWrite(M1, LOW);
-                    digitalWrite(M2, LOW);
+        /* When error occur, stop all the motor and reset everything. Wait the M999 command,
+           then return to idle state. */
+            stopMotor();
+            homing_step = 1;
+            if (Serial.available()) {
+              char c = Serial.read();
+              if (c != '\n' && c != '\r') {
+                    input_g_code += c;
                 } else {
-                    Serial.println("Error condition cleared. System returns to home position now.");
-                    systemHoming();
-                    break;
+                    if (input_g_code == "M999") idleSystem();
+                    input_g_code = "";
                 }
-                analogWrite(E1, 100);
-                analogWrite(E2, 100);
-            } else if (clock - error_occur_time <= 610) {
-                stopMotor();
-                homing_step = 1;
-            }
             break;
+        }
     }
 }
 
@@ -216,15 +197,13 @@ ISR(INT5_vect) {
 }
 
 ISR(TIMER2_OVF_vect) {
+    /* Everytime the timer 2 overflow interrupt triggered, increment the clock to change the system time.
+       Then calculate and update the motor speed. */
     clock++;
-
-    /* If the machine is undergoing moving or homing, then everytime the interrupt triggered, calculate the speed. */
-    if (state == MOVING || state == HOMING) {
-        left_motor.speed = (left_motor.encoder - left_motor.previous_encoder) / 0.016384;
-        right_motor.speed = (right_motor.encoder - right_motor.previous_encoder) / 0.016384;
-        left_motor.previous_encoder = left_motor.encoder;
-        right_motor.previous_encoder = right_motor.encoder;
-    }
+    left_motor.speed = (left_motor.encoder - left_motor.previous_encoder) / 0.016384;
+    right_motor.speed = (right_motor.encoder - right_motor.previous_encoder) / 0.016384;
+    left_motor.previous_encoder = left_motor.encoder;
+    right_motor.previous_encoder = right_motor.encoder;
 }
 
 ISR(PCINT0_vect) {
@@ -273,9 +252,7 @@ void systemMoving(void) {
 
 void systemError(void) {
     state = ERROR;
-    error_occur_time = clock;
-    Serial.print("Error detected — please check the issue and take action. ");
-    Serial.println("If the error persists after 10 seconds, the machine will automatically move to a safe position.");
+    Serial.println("Error detected — please solve the issue and input M999. ");
 }
 
 bool switchDebounce(int button_number) {
