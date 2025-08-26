@@ -9,6 +9,9 @@
 #define ENCODER_RESOLUTION 48
 #define GEAR_RATIO 172
 #define DEBOUNCE_COUNT 2
+#define MOTOR_PERIMETER 45.5
+#define X_LIMIT 216
+#define Y_LIMIT 135
 
 // =============================================================================
 // Section: Initialise Global Variable
@@ -20,7 +23,9 @@ struct Motor {
     uint8_t power;
     long encoder;
     long previous_encoder;
-    long last_stop;
+    double last_stop;
+    double position;
+    double previous_position;
     bool direction;
     float speed;
 };
@@ -200,24 +205,24 @@ ISR(TIMER2_OVF_vect) {
     /* Everytime the timer 2 overflow interrupt triggered, increment the clock to change the system time.
        Then calculate and update the motor speed. */
     clock++;
-    left_motor.speed = (left_motor.encoder - left_motor.previous_encoder) / 0.016384;
-    right_motor.speed = (right_motor.encoder - right_motor.previous_encoder) / 0.016384;
-    left_motor.previous_encoder = left_motor.encoder;
-    right_motor.previous_encoder = right_motor.encoder;
+    left_motor.speed = (left_motor.position - left_motor.previous_position) / 0.016384;
+    right_motor.speed = (right_motor.position - right_motor.previous_position) / 0.016384;
+    left_motor.previous_position = left_motor.position;
+    right_motor.previous_position = right_motor.position;
 }
 
 ISR(PCINT0_vect) {
     /* When this interrupt triggred by any logic change in corresponding pin, change the left encoder value.
        If motor rotate CCW, increment the value. If motor rotate CW, decrement the value. */
-    if (digitalRead(M2)) left_motor.encoder++;
-    if (!digitalRead(M2)) left_motor.encoder--;
+    if (digitalRead(M2)) left_motor.position += 0.00551478;
+    if (!digitalRead(M2)) left_motor.position -= 0.00551478;
 }
 
 ISR(PCINT2_vect) {
     /* When this interrupt triggred by any logic change in corresponding pin, change the right encoder value.
        If motor rotate CCW, increment the value. If motor rotate CW, decrement the value. */
-    if (digitalRead(M1)) right_motor.encoder++;
-    if (!digitalRead(M1)) right_motor.encoder--;
+    if (digitalRead(M1)) right_motor.position += 0.00551478;
+    if (!digitalRead(M1)) right_motor.position -= 0.00551478;
 }
 
 // =============================================================================
@@ -241,8 +246,7 @@ void systemHoming(void) {
     EICRA &= ~(1 << ISC31);
     EICRB &= ~(1 << ISC41);
     command.g = 0;
-    left_motor.encoder = 0;
-    right_motor.encoder = 0;
+    resetOrigin();
 }
 
 void systemMoving(void) {
@@ -286,23 +290,23 @@ bool motorFullyStopped(void) {
 
 void resetOrigin(void) {
     while (!motorFullyStopped()) { asm("nop"); }
-    left_motor.encoder = 0;
-    right_motor.encoder = 0;
+    left_motor.position = 0;
+    right_motor.position = 0;
 }
 
 void updateLastStop(void) {
     while (!motorFullyStopped()) { asm("nop"); }
-    left_motor.last_stop = left_motor.encoder;
-    right_motor.last_stop = right_motor.encoder;
+    left_motor.last_stop = left_motor.position;
+    right_motor.last_stop = right_motor.position;
 }
 
 void moveInDirection(char direction, uint8_t power) {
     /* Calculate the difference between the left and right encoder value, calculate kp base on the power,
        then change the left and right motor power in order to get rid off this difference. */
-    unsigned int left_difference = abs(left_motor.encoder - left_motor.last_stop);
-    unsigned int right_difference = abs(right_motor.encoder - right_motor.last_stop);
-    int error = left_difference - right_difference;
-    float k_p = 1 + power / 100;
+    double left_difference = abs(left_motor.position - left_motor.last_stop);
+    double right_difference = abs(right_motor.position - right_motor.last_stop);
+    double error = left_difference - right_difference;
+    float k_p = 1000 + power * 6;
     left_motor.power = sendPower(power - k_p * error);
     right_motor.power = sendPower(power + k_p * error);
 
