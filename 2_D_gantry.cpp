@@ -17,21 +17,23 @@
 // Section: Initialise Global Variable
 // =============================================================================
 
-/* Build a struct for motors, where store the information power, encoder reading value,
-   direction (true is clockwise and false is anti-clockwise), and speed. */
+/* Build a struct for motors, where store the information of a motor including :
+   The power send to the motor
+   The position of the motor, which is represent by the position of a point on the belt (i.e. delta A).
+   The previous position of the motor, which is represent by the previous position of a point on the belt (i.e. delta A-1).
+   The position of the motor when it last time stopped, which is represent by the position of a point on the belt when the motor last time stopped.
+   The speed of the motor, which is represent by the speed of a point on the belt.
+   The unit of all the distance measurement is mm, and the unit of all the speed measurement is mm/s. */
 struct Motor {
     uint8_t power;
-    long encoder;
-    long previous_encoder;
-    double last_stop;
     double position;
     double previous_position;
-    bool direction;
+    double last_stop;
     float speed;
 };
 
-Motor left_motor = {0, 0, 0, 0, 0, 0};
-Motor right_motor = {0, 0, 0, 0, 0, 0};
+Motor left_motor = {0, 0, 0, 0, 0};
+Motor right_motor = {0, 0, 0, 0, 0};
 
 /* Build two data type, which use for finite state machine, and store the G-Code command.
    The state of the finite state machine is idle. */
@@ -63,9 +65,9 @@ void stopMotor(void);
 bool motorFullyStopped(void);
 void resetOrigin(void);
 void updateLastStop(void);
+void processGCode(String line);
 void moveInDirection(char direction, uint8_t power);
 void moveInDistance(float x, float y);
-void processGCode(String line);
 void performHoming(void);
 
 
@@ -147,6 +149,7 @@ void loop() {
         /* When error occur, stop all the motor and reset everything. Wait the M999 command,
            then return to idle state. */
             stopMotor();
+            updateLastStop();
             homing_step = 1;
             if (Serial.available()) {
               char c = Serial.read();
@@ -212,15 +215,17 @@ ISR(TIMER2_OVF_vect) {
 }
 
 ISR(PCINT0_vect) {
-    /* When this interrupt triggred by any logic change in corresponding pin, change the left encoder value.
-       If motor rotate CCW, increment the value. If motor rotate CW, decrement the value. */
+    /* When this interrupt triggred by any logic change in corresponding pin, update the left motor position.
+       If motor rotate CCW, add 0.00551478 to the position, the number is the distance that a point on belt travelled (mm/encoder pulse). 
+       If motor rotate CW, minus 0.00551478 to the position. */
     if (digitalRead(M2)) left_motor.position += 0.00551478;
     if (!digitalRead(M2)) left_motor.position -= 0.00551478;
 }
 
 ISR(PCINT2_vect) {
-    /* When this interrupt triggred by any logic change in corresponding pin, change the right encoder value.
-       If motor rotate CCW, increment the value. If motor rotate CW, decrement the value. */
+    /* When this interrupt triggred by any logic change in corresponding pin, update the right motor position.
+       If motor rotate CCW, add 0.00551478 to the position, the number is the distance that a point on belt travelled (mm/encoder pulse). 
+       If motor rotate CW, minus 0.00551478 to the position. */
     if (digitalRead(M1)) right_motor.position += 0.00551478;
     if (!digitalRead(M1)) right_motor.position -= 0.00551478;
 }
@@ -246,7 +251,6 @@ void systemHoming(void) {
     EICRA &= ~(1 << ISC31);
     EICRB &= ~(1 << ISC41);
     command.g = 0;
-    resetOrigin();
 }
 
 void systemMoving(void) {
@@ -300,6 +304,29 @@ void updateLastStop(void) {
     right_motor.last_stop = right_motor.position;
 }
 
+void processGCode(String line) {
+    // Parse character-by-character
+    int i = 0;
+    while (i < line.length()) {
+        char letter = line[i++];
+        if (letter < 65 || letter >122 || (letter > 90 && letter < 97)) { continue; }
+
+        // Gather number after the letter
+        String numberStr = "";
+        while (i < line.length() && (isDigit(line[i]) || line[i] == '.' || line[i] == ' ')) {
+            numberStr += line[i++];
+        }
+        float value = numberStr.toFloat();
+
+        switch (letter) {
+            case 'G': case 'g': command.g = (int)value; break;
+            case 'X': case 'x': command.x = value; break;
+            case 'Y': case 'y': command.y = value; break;
+            case 'F': case 'f': command.f = value; break;
+        }
+    }
+}
+
 void moveInDirection(char direction, uint8_t power) {
     /* Calculate the difference between the left and right encoder value, calculate kp base on the power,
        then change the left and right motor power in order to get rid off this difference. */
@@ -332,29 +359,6 @@ void moveInDistance(float x, float y) {
 
 }
 
-void processGCode(String line) {
-    // Parse character-by-character
-    int i = 0;
-    while (i < line.length()) {
-        char letter = line[i++];
-        if (letter < 65 || letter >122 || (letter > 90 && letter < 97)) { continue; }
-
-        // Gather number after the letter
-        String numberStr = "";
-        while (i < line.length() && (isDigit(line[i]) || line[i] == '.' || line[i] == ' ')) {
-            numberStr += line[i++];
-        }
-        float value = numberStr.toFloat();
-
-        switch (letter) {
-            case 'G': case 'g': command.g = (int)value; break;
-            case 'X': case 'x': command.x = value; break;
-            case 'Y': case 'y': command.y = value; break;
-            case 'F': case 'f': command.f = value; break;
-        }
-    }
-}
-
 void performHoming(void) {
     /* There are 8 steps in the homing procedure. Fast move to left to touch the left button then fast leave.
        Slow down to touch the left botton again and slowly leave. Once finish, do the same for going down. 
@@ -367,7 +371,7 @@ void performHoming(void) {
     } else if (homing_step == 5) {
         moveInDirection('L', 100);
     } else if (homing_step == 7) {
-        moveInDirection('R', 60);
+        moveInDirection('R', 50);
     } else if (homing_step == 9) {
         moveInDirection('D', 200);
     } else if (homing_step == 11) {
@@ -375,7 +379,7 @@ void performHoming(void) {
     } else if (homing_step == 13) {
         moveInDirection('D', 100);
     } else if (homing_step == 15) {
-        moveInDirection('U', 60);
+        moveInDirection('U', 50);
     } else if (homing_step == 16) {
         idleSystem();
         homing_step = 1;
