@@ -331,11 +331,40 @@ void processGCode(String line) {
         }
         float value = numberStr.toFloat();
 
+        /* Store the command value. If the command value is not suit the system, do not operate. 
+           Send the error message to the user to ask other command. */
         switch (letter) {
             case 'G': case 'g': command.g = (int)value; break;
-            case 'X': case 'x': command.x = value; break;
-            case 'Y': case 'y': command.y = value; break;
-            case 'F': case 'f': command.f = value; break;
+            case 'X': case 'x':
+                if ((left_motor.position + right_motor.position) / 2 + value > X_LIMIT) {
+                    Serial.println("Warning: System will move outside the X boundary.");
+                    command.g = 0;
+                    command.x = 0;
+                    command.y = 0;
+                } else { command.x = value; }
+                break;
+            case 'Y': case 'y': 
+                if ((left_motor.position - right_motor.position) / 2 + value > Y_LIMIT) {
+                    Serial.println("Warning: System will move outside the Y boundary.");
+                    command.g = 0;
+                    command.x = 0;
+                    command.y = 0;
+                } else { command.y = value; }
+                break;
+            case 'F': case 'f':
+                if (value > 1800) {
+                    Serial.println("Warning: Input feed rate is to fast.");
+                } else if (value < 100) {
+                    Serial.println("Warning: Input feed rate is to slow.");
+                } else {
+                    command.f = value;
+                    break;
+                }
+                command.g = 0;
+                command.x = 0;
+                command.y = 0;
+                command.f = 0;
+                break;
         }
     }
 }
@@ -369,33 +398,42 @@ void moveInDirection(char direction, uint8_t power) {
 }
 
 void moveController(void) {
+    /* Base on the G code command, calculate the total distance need to travel, the ratio of distance and speed in X and Y direction. 
+       Calculate the desire speed in X and Y component, further calculate desire speed for belt A and B. Get the ratio between A and B.*/
     double total_distance = sqrt(command.x * command.x + command.y * command.y);
     double x_ratio = command.x / total_distance;
     double y_ratio = command.y / total_distance;
-    double max_x_speed = command.f * x_ratio / 60;
-    double max_y_speed = command.f * y_ratio / 60;
-    double max_a_speed = max_x_speed + max_y_speed;
-    double max_b_speed = max_x_speed - max_y_speed;
-    double a_ratio = max_a_speed / (command.f / 60);
-    double b_ratio = max_b_speed / (command.f / 60);
+    double desire_x_speed = command.f * x_ratio / 60;
+    double desire_y_speed = command.f * y_ratio / 60;
+    double desire_a_speed = desire_x_speed + desire_y_speed;
+    double desire_b_speed = desire_x_speed - desire_y_speed;
+    double a_ratio = desire_a_speed / (command.f / 60);
+    double b_ratio = desire_b_speed / (command.f / 60);
 
+    /* Find the travelled distance of belt A and B, then take the error between them base on the ratio they have. 
+       Only take the absolute value for error. Then if belt A is moving negatively, make it less negative if it is moving fast,
+       and vice visa. Same idea apply to belt B. Use P controller to syncronise two motors. The gain of the controller is larger
+       if motor move faster. */
     double delta_a = left_motor.position - left_motor.last_stop;
     double delta_b = right_motor.position - right_motor.last_stop;
-    double sync_error = delta_a * b_ratio - delta_b * a_ratio;
-    double sync_kp = 0.2;
-    belt_speed[0] -= sync_error * sync_kp;
-    belt_speed[1] += sync_error * sync_kp;
+    double sync_error = abs(delta_a * b_ratio) - abs(delta_b * a_ratio);
+    double sync_kp = 0.012 + (left_motor.power + right_motor.power) / 30000;
+    belt_speed[0] -= sync_error * sync_kp * (belt_speed[0] >= 0 ? 1 : -1);
+    belt_speed[1] += sync_error * sync_kp * (belt_speed[1] >= 0 ? 1 : -1);
 
+    /* Calcylate the travelled distance in X and Y direction base on the travelled distance for belt A and B, 
+       from there, calculate the total travelled_distance and the remain distance from destination. */
     double delta_x = (delta_a + delta_b) / 2;
     double delta_y = (delta_a - delta_b) / 2;
     double travelled_distance = sqrt(delta_x * delta_x + delta_y * delta_y);
     double remain_distance = total_distance - travelled_distance;   
 
-
+    /* Use PI controller for distance control, following controller gains are tuned base on our machine. */
     static double integral_remain_distance = 0;
-    double distance_kp = 3;
+    double distance_kp = 4.9;
     double distance_ki = 0.002;
 
+    /* If we can arrive the destination in next second, start use distance controller. Otherwise, try to maintain the desire feed rate. */
     if ((remain_distance / (command.f / 60)) < 1) {
         integral_remain_distance += remain_distance;
         if (integral_remain_distance > 100) integral_remain_distance = 100;
@@ -407,22 +445,25 @@ void moveController(void) {
         belt_speed[1] += ACCELATION * b_ratio;
     }
 
-    (abs(belt_speed[0]) > abs(max_a_speed)) ? belt_speed[0] = max_a_speed : belt_speed[0] = belt_speed[0];
-    (abs(belt_speed[1]) > abs(max_b_speed)) ? belt_speed[1] = max_b_speed : belt_speed[1] = belt_speed[1];
+    /* If velocity profile exceed the desire velocity we want, just capture at desire velocity. */
+    (abs(belt_speed[0]) > abs(desire_a_speed)) ? belt_speed[0] = desire_a_speed : belt_speed[0] = belt_speed[0];
+    (abs(belt_speed[1]) > abs(desire_b_speed)) ? belt_speed[1] = desire_b_speed : belt_speed[1] = belt_speed[1];
 
+    /* Use speed contoller to follow the desire speed, only P controller is used in this case. */
     double speed_kp = 2;
     double left_speed_error = abs(belt_speed[0]) - abs(left_motor.speed);
     double right_speed_error = abs(belt_speed[1]) - abs(right_motor.speed);
-
     left_motor.power = sendPower(left_motor.power + speed_kp * left_speed_error);
     right_motor.power = sendPower(right_motor.power + speed_kp * right_speed_error);
 
+    /* Calculate the motor speed. When it less than 0.1mm away from the destination, and the motor speed is less than 0.01 mm/s,
+       then finish MOVING task, reset everything and send the machine back to idle state. */
     double motor_speed = sqrt(left_motor.speed * left_motor.speed + right_motor.speed * right_motor.speed);
     if (abs(remain_distance) < 0.1 && abs(motor_speed) < 0.01) {
         idleSystem();
         belt_speed[0] = 0;
         belt_speed[1] = 0;
-        Serial.println("move finish");
+        integral_remain_distance = 0;
     }
 }
 
@@ -434,19 +475,19 @@ void performHoming(void) {
     if (homing_step == 1) {
         moveInDirection('L', 200);
     } else if (homing_step == 3) {
-        moveInDirection('R', 200);
+        moveInDirection('R', 100);
     } else if (homing_step == 5) {
         moveInDirection('L', 100);
     } else if (homing_step == 7) {
-        moveInDirection('R', 50);
+        moveInDirection('R', 60);
     } else if (homing_step == 9) {
         moveInDirection('D', 200);
     } else if (homing_step == 11) {
-        moveInDirection('U', 200);
+        moveInDirection('U', 100);
     } else if (homing_step == 13) {
         moveInDirection('D', 100);
     } else if (homing_step == 15) {
-        moveInDirection('U', 50);
+        moveInDirection('U', 60);
     } else if (homing_step == 16) {
         idleSystem();
         homing_step = 1;
