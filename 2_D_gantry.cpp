@@ -1,6 +1,7 @@
 #include <avr/io.h>
 #include <Arduino.h>
 #include <avr/interrupt.h>
+#include <math.h>
 
 #define E1 5 // PE3
 #define M1 4 // PE2
@@ -12,6 +13,7 @@
 #define MOTOR_PERIMETER 45.5
 #define X_LIMIT 216
 #define Y_LIMIT 135
+#define ACCELATION 0.1
 
 // =============================================================================
 // Section: Initialise Global Variable
@@ -34,12 +36,13 @@ struct Motor {
 
 Motor left_motor = {0, 0, 0, 0, 0};
 Motor right_motor = {0, 0, 0, 0, 0};
+double belt_speed[2] = {0};
 
 /* Build two data type, which use for finite state machine, and store the G-Code command.
    The state of the finite state machine is idle. */
 enum MachineState {IDLE, PARSING, MOVING, HOMING, ERROR};
 MachineState state = IDLE;
-struct GCode {int g; float x; float y; float f;};
+struct GCode {int g; double x; double y; double f;};
 GCode command = {0, 0, 0, 0};
 String input_g_code = "";
 
@@ -48,6 +51,7 @@ String input_g_code = "";
    top, button, left and right. homing_step shows the current step when the machine do homing. */
 volatile uint16_t clock = 0;
 volatile uint16_t last_clock[4] = {0};
+volatile uint16_t speed_clock = 0;
 volatile uint8_t homing_step = 1;
 
 // =============================================================================
@@ -67,7 +71,7 @@ void resetOrigin(void);
 void updateLastStop(void);
 void processGCode(String line);
 void moveInDirection(char direction, uint8_t power);
-void moveInDistance(float x, float y);
+void moveController(void);
 void performHoming(void);
 
 
@@ -143,7 +147,16 @@ void loop() {
             performHoming();
             break;
         case MOVING:
-            moveInDirection('U', 100);
+            if (clock - speed_clock > 0) {
+                speed_clock = clock;
+                moveController();
+            }
+
+            (belt_speed[0] >= 0) ? digitalWrite(M2, HIGH) : digitalWrite(M2, LOW);
+            (belt_speed[1] >= 0) ? digitalWrite(M1, HIGH) : digitalWrite(M1, LOW);
+            analogWrite(E1, right_motor.power);
+            analogWrite(E2, left_motor.power);
+
             break;
         case ERROR:
         /* When error occur, stop all the motor and reset everything. Wait the M999 command,
@@ -313,7 +326,7 @@ void processGCode(String line) {
 
         // Gather number after the letter
         String numberStr = "";
-        while (i < line.length() && (isDigit(line[i]) || line[i] == '.' || line[i] == ' ')) {
+        while (i < line.length() && (isDigit(line[i]) || line[i] == '.' || line[i] == ' ' || line[i] == '-')) {
             numberStr += line[i++];
         }
         float value = numberStr.toFloat();
@@ -355,8 +368,62 @@ void moveInDirection(char direction, uint8_t power) {
     analogWrite(E2, left_motor.power);
 }
 
-void moveInDistance(float x, float y) {
+void moveController(void) {
+    double total_distance = sqrt(command.x * command.x + command.y * command.y);
+    double x_ratio = command.x / total_distance;
+    double y_ratio = command.y / total_distance;
+    double max_x_speed = command.f * x_ratio / 60;
+    double max_y_speed = command.f * y_ratio / 60;
+    double max_a_speed = max_x_speed + max_y_speed;
+    double max_b_speed = max_x_speed - max_y_speed;
+    double a_ratio = max_a_speed / (command.f / 60);
+    double b_ratio = max_b_speed / (command.f / 60);
 
+    double delta_a = left_motor.position - left_motor.last_stop;
+    double delta_b = right_motor.position - right_motor.last_stop;
+    double sync_error = delta_a * b_ratio - delta_b * a_ratio;
+    double sync_kp = 0.2;
+    belt_speed[0] -= sync_error * sync_kp;
+    belt_speed[1] += sync_error * sync_kp;
+
+    double delta_x = (delta_a + delta_b) / 2;
+    double delta_y = (delta_a - delta_b) / 2;
+    double travelled_distance = sqrt(delta_x * delta_x + delta_y * delta_y);
+    double remain_distance = total_distance - travelled_distance;   
+
+
+    static double integral_remain_distance = 0;
+    double distance_kp = 3;
+    double distance_ki = 0.002;
+
+    if ((remain_distance / (command.f / 60)) < 1) {
+        integral_remain_distance += remain_distance;
+        if (integral_remain_distance > 100) integral_remain_distance = 100;
+        if (integral_remain_distance < -100) integral_remain_distance = -100;
+        belt_speed[0] = (remain_distance * distance_kp + integral_remain_distance * distance_ki) * a_ratio;
+        belt_speed[1] = (remain_distance * distance_kp + integral_remain_distance * distance_ki) * b_ratio;
+    } else {
+        belt_speed[0] += ACCELATION * a_ratio;
+        belt_speed[1] += ACCELATION * b_ratio;
+    }
+
+    (abs(belt_speed[0]) > abs(max_a_speed)) ? belt_speed[0] = max_a_speed : belt_speed[0] = belt_speed[0];
+    (abs(belt_speed[1]) > abs(max_b_speed)) ? belt_speed[1] = max_b_speed : belt_speed[1] = belt_speed[1];
+
+    double speed_kp = 2;
+    double left_speed_error = abs(belt_speed[0]) - abs(left_motor.speed);
+    double right_speed_error = abs(belt_speed[1]) - abs(right_motor.speed);
+
+    left_motor.power = sendPower(left_motor.power + speed_kp * left_speed_error);
+    right_motor.power = sendPower(right_motor.power + speed_kp * right_speed_error);
+
+    double motor_speed = sqrt(left_motor.speed * left_motor.speed + right_motor.speed * right_motor.speed);
+    if (abs(remain_distance) < 0.1 && abs(motor_speed) < 0.01) {
+        idleSystem();
+        belt_speed[0] = 0;
+        belt_speed[1] = 0;
+        Serial.println("move finish");
+    }
 }
 
 void performHoming(void) {
