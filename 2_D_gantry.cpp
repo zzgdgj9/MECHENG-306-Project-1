@@ -10,7 +10,7 @@
 #define ENCODER_RESOLUTION 48
 #define GEAR_RATIO 172
 #define DEBOUNCE_COUNT 2
-#define MOTOR_PERIMETER 45.5
+#define MOTOR_PERIMETER 45.3
 #define X_LIMIT 216
 #define Y_LIMIT 135
 #define ACCELATION 0.1
@@ -191,7 +191,7 @@ ISR(INT2_vect) {
 // External interrupt 2 is triggered on the rising edge when the bottom button is pressed.
 ISR(INT3_vect) {
     if (switchDebounce(1)) {
-        if (state == HOMING) {
+        if (state == HOMING && homing_step > 8) {
             homing_step++;
             return;
         }
@@ -202,7 +202,7 @@ ISR(INT3_vect) {
 // External interrupt 2 is triggered on the rising edge when the left button is pressed.
 ISR(INT4_vect) {
     if (switchDebounce(2)) {
-        if (state == HOMING) {
+        if (state == HOMING && homing_state < 8) {
             homing_step++;
             return;
         }
@@ -231,16 +231,16 @@ ISR(PCINT0_vect) {
     /* When this interrupt triggred by any logic change in corresponding pin, update the left motor position.
        If motor rotate CCW, add 0.00551478 to the position, the number is the distance that a point on belt travelled (mm/encoder pulse). 
        If motor rotate CW, minus 0.00551478 to the position. */
-    if (digitalRead(M2)) left_motor.position += 0.00551478;
-    if (!digitalRead(M2)) left_motor.position -= 0.00551478;
+    if (digitalRead(M2)) left_motor.position += MOTOR_PERIMETER / (ENCODER_RESOLUTION * GEAR_RATIO);
+    if (!digitalRead(M2)) left_motor.position -= MOTOR_PERIMETER / (ENCODER_RESOLUTION * GEAR_RATIO);
 }
 
 ISR(PCINT2_vect) {
     /* When this interrupt triggred by any logic change in corresponding pin, update the right motor position.
        If motor rotate CCW, add 0.00551478 to the position, the number is the distance that a point on belt travelled (mm/encoder pulse). 
        If motor rotate CW, minus 0.00551478 to the position. */
-    if (digitalRead(M1)) right_motor.position += 0.00551478;
-    if (!digitalRead(M1)) right_motor.position -= 0.00551478;
+    if (digitalRead(M1)) right_motor.position += MOTOR_PERIMETER / (ENCODER_RESOLUTION * GEAR_RATIO);
+    if (!digitalRead(M1)) right_motor.position -= MOTOR_PERIMETER / (ENCODER_RESOLUTION * GEAR_RATIO);
 }
 
 // =============================================================================
