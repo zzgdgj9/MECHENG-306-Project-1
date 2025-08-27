@@ -13,7 +13,7 @@
 #define MOTOR_PERIMETER 45.3
 #define X_LIMIT 216
 #define Y_LIMIT 135
-#define ACCELATION 0.1
+#define ACCELATION 0.32
 
 // =============================================================================
 // Section: Initialise Global Variable
@@ -202,7 +202,7 @@ ISR(INT3_vect) {
 // External interrupt 2 is triggered on the rising edge when the left button is pressed.
 ISR(INT4_vect) {
     if (switchDebounce(2)) {
-        if (state == HOMING && homing_state < 8) {
+        if (state == HOMING && homing_step < 8) {
             homing_step++;
             return;
         }
@@ -352,18 +352,13 @@ void processGCode(String line) {
                 } else { command.y = value; }
                 break;
             case 'F': case 'f':
-                if (value > 1800) {
-                    Serial.println("Warning: Input feed rate is to fast.");
+                if (value > 1500) {
+                    command.f = 1500;
                 } else if (value < 100) {
                     Serial.println("Warning: Input feed rate is to slow.");
                 } else {
                     command.f = value;
-                    break;
                 }
-                command.g = 0;
-                command.x = 0;
-                command.y = 0;
-                command.f = 0;
                 break;
         }
     }
@@ -473,21 +468,21 @@ void performHoming(void) {
        Once the homing step is not within the range, that means either the homing finish or something going wrong.
        Send the machine to idle state and reset the homing_step. Clear the encoder value to set the origin. */
     if (homing_step == 1) {
-        moveInDirection('L', 200);
+        moveInDirection('L', 255);
     } else if (homing_step == 3) {
-        moveInDirection('R', 100);
+        moveInDirection('R', 200);
     } else if (homing_step == 5) {
         moveInDirection('L', 100);
     } else if (homing_step == 7) {
-        moveInDirection('R', 60);
+        moveInDirection('R', 56);
     } else if (homing_step == 9) {
-        moveInDirection('D', 200);
+        moveInDirection('D', 255);
     } else if (homing_step == 11) {
-        moveInDirection('U', 100);
+        moveInDirection('U', 200);
     } else if (homing_step == 13) {
         moveInDirection('D', 100);
     } else if (homing_step == 15) {
-        moveInDirection('U', 60);
+        moveInDirection('U', 56);
     } else if (homing_step == 16) {
         idleSystem();
         homing_step = 1;
