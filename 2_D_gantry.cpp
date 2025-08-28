@@ -27,7 +27,7 @@
    The speed of the motor, which is represent by the speed of a point on the belt.
    The unit of all the distance measurement is mm, and the unit of all the speed measurement is mm/s. */
 struct Motor {
-    uint8_t power;
+    double power;
     double position;
     double previous_position;
     double last_stop;
@@ -64,7 +64,7 @@ void systemHoming(void);
 void systemMoving(void);
 void systemError(void);
 bool switchDebounce(int button_number);
-uint8_t sendPower(int power);
+double sendPower(double power);
 void stopMotor(void);
 bool motorFullyStopped(void);
 void resetOrigin(void);
@@ -272,8 +272,8 @@ void systemMoving(void) {
 }
 
 void systemError(void) {
+    if (state != ERROR) Serial.println("Error detected — please solve the issue and input M999. ");
     state = ERROR;
-    Serial.println("Error detected — please solve the issue and input M999. ");
 }
 
 bool switchDebounce(int button_number) {
@@ -284,7 +284,7 @@ bool switchDebounce(int button_number) {
     return false;
 }
 
-uint8_t sendPower(int power) {
+double sendPower(double power) {
     if (power < 0) {
         return 0;
     } else if (power > 255) {
@@ -405,19 +405,10 @@ void moveController(void) {
     double a_ratio = desire_a_speed / (command.f / 60);
     double b_ratio = desire_b_speed / (command.f / 60);
 
-    /* Find the travelled distance of belt A and B, then take the error between them base on the ratio they have. 
-       Only take the absolute value for error. Then if belt A is moving negatively, make it less negative if it is moving fast,
-       and vice visa. Same idea apply to belt B. Use P controller to syncronise two motors. The gain of the controller is larger
-       if motor move faster. */
+    /* Find the travelled distance of belt A and B, then Calculate the travelled distance in X and Y direction
+     base on the travelled distance for belt A and B. From there, calculate the total travelled_distance and the remain distance from destination. */
     double delta_a = left_motor.position - left_motor.last_stop;
     double delta_b = right_motor.position - right_motor.last_stop;
-    double sync_error = abs(delta_a * b_ratio) - abs(delta_b * a_ratio);
-    double sync_kp = 0.012 + (left_motor.power + right_motor.power) / 30000;
-    belt_speed[0] -= sync_error * sync_kp * (belt_speed[0] >= 0 ? 1 : -1);
-    belt_speed[1] += sync_error * sync_kp * (belt_speed[1] >= 0 ? 1 : -1);
-
-    /* Calcylate the travelled distance in X and Y direction base on the travelled distance for belt A and B, 
-       from there, calculate the total travelled_distance and the remain distance from destination. */
     double delta_x = (delta_a + delta_b) / 2;
     double delta_y = (delta_a - delta_b) / 2;
     double travelled_distance = sqrt(delta_x * delta_x + delta_y * delta_y);
@@ -443,6 +434,15 @@ void moveController(void) {
     /* If velocity profile exceed the desire velocity we want, just capture at desire velocity. */
     (abs(belt_speed[0]) > abs(desire_a_speed)) ? belt_speed[0] = desire_a_speed : belt_speed[0] = belt_speed[0];
     (abs(belt_speed[1]) > abs(desire_b_speed)) ? belt_speed[1] = desire_b_speed : belt_speed[1] = belt_speed[1];
+
+    /* Take the synchronise error between left and right motor base on the ratio they have. 
+       Only take the absolute value for error. Then if belt A is moving negatively, make it less negative if it is moving fast,
+       and vice visa. Same idea apply to belt B. Use P controller to syncronise two motors. The gain of the controller is larger
+       if motor move faster. */
+    double sync_error = abs(delta_a * b_ratio) - abs(delta_b * a_ratio);
+    double sync_kp = 0.012 + (left_motor.power + right_motor.power) / 30000;
+    belt_speed[0] -= sync_error * sync_kp * (belt_speed[0] >= 0 ? 1 : -1);
+    belt_speed[1] += sync_error * sync_kp * (belt_speed[1] >= 0 ? 1 : -1);
 
     /* Use speed contoller to follow the desire speed, only P controller is used in this case. */
     double speed_kp = 2;
