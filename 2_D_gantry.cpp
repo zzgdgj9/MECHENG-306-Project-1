@@ -12,7 +12,7 @@
 #define DEBOUNCE_COUNT 2
 #define MOTOR_PERIMETER 45.3
 #define X_LIMIT 216
-#define Y_LIMIT 135
+#define Y_LIMIT 1350
 #define ACCELATION 0.32
 
 // =============================================================================
