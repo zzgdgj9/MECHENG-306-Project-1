@@ -119,7 +119,39 @@ void setup() {
     sei();
 }
 
+int print = 1;
+int print_clock;
 void loop() {
+    if (print){
+        double time = (clock-1) * 0.016384;
+        (time < 0) ? time = 0 : time = time;
+        Serial.print(time, 6);
+        Serial.print(" ");
+        // double a = sqrt(command.x * command.x + command.y * command.y);
+        // Serial.print(a);
+        // Serial.print(" ");
+        // double x = (left_motor.position + right_motor.position) / 2;
+        // double y = (left_motor.position - right_motor.position) / 2;
+        // double b = sqrt(x * x + y * y);
+        // Serial.println(b, 6);
+        double x_v = (belt_speed[0] + belt_speed[1]) / 2;
+        double y_v = (belt_speed[0] - belt_speed[1]) / 2;
+        double a = sqrt(x_v * x_v + y_v * y_v) * 60;
+        Serial.print(a);
+        Serial.print(" ");
+        double x = (left_motor.speed + right_motor.speed) / 2;
+        double y = (left_motor.speed - right_motor.speed) / 2;
+        double b = sqrt(x * x + y * y) * 60;
+        Serial.println(b, 6);
+
+        if (time > 2.98) {
+        command.x = 120;
+        command.y = 60;
+        command.f = 1000;
+        state = MOVING;
+        }
+    }
+
     switch (state) {
         case IDLE:
             stopMotor();
@@ -147,11 +179,11 @@ void loop() {
             performHoming();
             break;
         case MOVING:
-            if (clock - speed_clock > 0) {
-                speed_clock = clock;
-                moveController();
-            }
-
+            // if (clock - speed_clock > 0) {
+            //     speed_clock = clock;
+            //     moveController();
+            // }
+            moveController();
             (belt_speed[0] >= 0) ? digitalWrite(M2, HIGH) : digitalWrite(M2, LOW);
             (belt_speed[1] >= 0) ? digitalWrite(M1, HIGH) : digitalWrite(M1, LOW);
             analogWrite(E1, right_motor.power);
