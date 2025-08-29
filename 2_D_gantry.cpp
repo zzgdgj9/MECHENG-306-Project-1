@@ -122,6 +122,7 @@ void setup() {
 int print = 1;
 int print_clock;
 void loop() {
+    /* Collect distance and speed controller performance data */
     if (print){
         double time = (clock-1) * 0.016384;
         (time < 0) ? time = 0 : time = time;
